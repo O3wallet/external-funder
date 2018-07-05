@@ -71,7 +71,7 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
       send(fundingTxCreated.userId, fundingTxCreated)
       verifier.notifyOnReady(fundingTxCreated)
 
-    case fundingBroadcasted: FundingBroadcasted =>
+    case fundingBroadcasted: FundingTxBroadcasted =>
       send(fundingBroadcasted.userId, fundingBroadcasted)
       conns(fundingBroadcasted.userId) foreach cancelSocket
 

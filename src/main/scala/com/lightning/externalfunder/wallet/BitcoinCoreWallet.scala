@@ -24,7 +24,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
   val BitcoinWalletConfig(rpc, maxFundingSat, deadlineMsec, reserveRetriesDelayMsec, reserveRetriesNum) =
     ConfigFactory.parseResources("bitcoinCoreWallet.conf") as[BitcoinWalletConfig] "config"
 
-  case class ReserveOutputs(init: Init, triesDone: Int)
+  case class ReserveOutputs(start: Start, triesDone: Int)
   private var pendingFundingTries = Map.empty[UserId, ReserveOutputs]
   private var pendingUnsignedTxs = Map.empty[UserId, UnsignedTxCacheItem]
   private var pendingSignedTxs = Map.empty[UserId, Transaction]
@@ -39,7 +39,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
       for (userId \ reserveOuts <- pendingFundingTries if reserveOuts.triesDone > reserveRetriesNum) {
         context.system.eventStream publish Error(201, s"Failed after $reserveRetriesNum attempts", userId)
         pendingFundingTries = pendingFundingTries - userId
-        verifier.notifyOnFailed(reserveOuts.init)
+        verifier.notifyOnFailed(reserveOuts.start)
       }
 
       // Remove unsigned txs which has been pending for too long and send an event
@@ -56,43 +56,43 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           pendingSignedTxs = pendingSignedTxs - userId
       }
 
-    case init @ Init(userId, sum, _) =>
+    case start @ Start(userId, sum, _) =>
       pendingUnsignedTxs get userId match {
         case None if sum.amount > maxFundingSat => sender ! Error(204, "Max funding amount is exceeded", userId)
         case None if pendingFundingTries contains userId => sender ! Error(203, "Reservation pending already", userId)
-        case Some(item) if item.data.txOut.head.amount == sum => sender ! FundingTxAwaits(init, item.stamp)
+        case Some(item) if item.data.txOut.head.amount == sum => sender ! FundingTxAwaits(start, item.stamp)
         case Some(_) => sender ! Error(204, "Other funding already present", userId)
-        case None => self ! ReserveOutputs(init, triesDone = 0)
+        case None => self ! ReserveOutputs(start, triesDone = 0)
       }
 
-    case ReserveOutputs(init, n) =>
+    case ReserveOutputs(start, n) =>
       // Make a reservation by creating a dummy tx with locked outputs
-      val hex = Transaction write dummyTransaction(init.fundingAmount)
+      val hex = Transaction write dummyTransaction(start.fundingAmount)
       Try(bitcoin fundRawTransaction hex.toString) match {
 
         case Success(rawTx) =>
           val deadline = System.currentTimeMillis + deadlineMsec
           val item = CacheItem(data = Transaction read rawTx, deadline)
-          pendingUnsignedTxs = pendingUnsignedTxs.updated(init.userId, item)
-          sender ! FundingTxCreated(init, deadline)
+          pendingUnsignedTxs = pendingUnsignedTxs.updated(start.userId, item)
+          sender ! FundingTxCreated(start, deadline)
 
         case Failure(fundingError) =>
-          val reserveOuts1 = ReserveOutputs(init, triesDone = n + 1)
+          val reserveOuts1 = ReserveOutputs(start, triesDone = n + 1)
           // Probably no free outputs, retry a bit later and increase a limit
-          pendingFundingTries = pendingFundingTries.updated(init.userId, reserveOuts1)
+          pendingFundingTries = pendingFundingTries.updated(start.userId, reserveOuts1)
           errlog(fundingError)
       }
 
-    case SignFunding(userId, pubkeyScript) =>
+    case SignFundingTx(userId, pubkeyScript) =>
+      // Attempt to sign a stored dummy funding tx
+      // crucially, we don't broadcast it right away
       signTx(userId, pubkeyScript) onComplete {
-        // Attempt to sign a stored dummy funding
-        // crucially, we don't broadcast it
 
         case Success(tx) =>
           val finder = new PubKeyScriptIndexFinder(tx)
           val outIndex = finder.findPubKeyScriptIndex(pubkeyScript)
           pendingSignedTxs = pendingSignedTxs.updated(userId, tx)
-          sender ! FundingSigned(userId, tx.hash, outIndex)
+          sender ! FundingTxSigned(userId, tx.hash, outIndex)
 
         case Failure(_: NoSuchElementException) =>
           // This funding has probably expired, inform user
@@ -104,16 +104,16 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           errlog(signingError)
       }
 
-    case BroadcastFunding(userId, txHash)
+    case BroadcastFundingTx(userId, txHash)
       if !pendingSignedTxs.get(userId).exists(_.hash == txHash) =>
       sender ! Error(207, "No signed funding tx present", userId)
 
-    case BroadcastFunding(userId, _) =>
+    case BroadcastFundingTx(userId, _) =>
       val signedTx = pendingSignedTxs(userId)
       commit(userId, signedTx) onComplete {
 
         case Success(true) =>
-          sender ! FundingBroadcasted(userId, signedTx)
+          sender ! FundingTxBroadcasted(userId, signedTx)
           // We are done with this one, free all resources
           pendingFundingTries = pendingFundingTries - userId
           pendingUnsignedTxs = pendingUnsignedTxs - userId
