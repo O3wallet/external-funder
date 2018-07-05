@@ -37,7 +37,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
     case currentMillis: Long =>
       // Remove pending funding tries with too many attempts and send an event
       for (userId \ reserveOuts <- pendingFundingTries if reserveOuts.triesDone > reserveRetriesNum) {
-        context.system.eventStream publish Error(201, s"Failed after $reserveRetriesNum attempts", userId)
+        context.system.eventStream publish Fail(201, s"Failed after $reserveRetriesNum attempts", userId)
         pendingFundingTries = pendingFundingTries - userId
         verifier.notifyOnFailed(reserveOuts.start)
       }
@@ -51,17 +51,17 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
 
         case Success(true) =>
           // Only remove a related funding txs if used UTXO indeed was unlocked
-          context.system.eventStream publish Error(202, "Funding expired", userId)
+          context.system.eventStream publish Fail(202, "Funding expired", userId)
           pendingUnsignedTxs = pendingUnsignedTxs - userId
           pendingSignedTxs = pendingSignedTxs - userId
       }
 
     case start @ Start(userId, sum, _) =>
       pendingUnsignedTxs get userId match {
-        case None if sum.amount > maxFundingSat => sender ! Error(204, "Max funding amount is exceeded", userId)
-        case None if pendingFundingTries contains userId => sender ! Error(203, "Reservation pending already", userId)
+        case None if sum.amount > maxFundingSat => sender ! Fail(204, "Max funding amount is exceeded", userId)
+        case None if pendingFundingTries contains userId => sender ! Fail(203, "Reservation pending already", userId)
         case Some(item) if item.data.txOut.head.amount == sum => sender ! FundingTxAwaits(start, item.stamp)
-        case Some(_) => sender ! Error(204, "Other funding already present", userId)
+        case Some(_) => sender ! Fail(204, "Other funding already present", userId)
         case None => self ! ReserveOutputs(start, triesDone = 0)
       }
 
@@ -96,17 +96,17 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
 
         case Failure(_: NoSuchElementException) =>
           // This funding has probably expired, inform user
-          sender ! Error(205, "No funding reserved", userId)
+          sender ! Fail(205, "No funding reserved", userId)
 
         case Failure(signingError) =>
           // An internal error happened, log to inspect
-          sender ! Error(206, "Could not sign", userId)
+          sender ! Fail(206, "Could not sign", userId)
           errlog(signingError)
       }
 
     case BroadcastFundingTx(userId, txHash)
       if !pendingSignedTxs.get(userId).exists(_.hash == txHash) =>
-      sender ! Error(207, "No signed funding tx present", userId)
+      sender ! Fail(207, "No signed funding tx present", userId)
 
     case BroadcastFundingTx(userId, _) =>
       val signedTx = pendingSignedTxs(userId)
@@ -121,11 +121,11 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
 
         case Success(false) =>
           // Unable to publish but not an internal error
-          sender ! Error(208, "Could not publish", userId)
+          sender ! Fail(208, "Could not publish", userId)
 
         case Failure(broadcastingError) =>
           // An internal error happened, log to inspect
-          sender ! Error(208, "Could not publish", userId)
+          sender ! Fail(208, "Could not publish", userId)
           errlog(broadcastingError)
       }
 

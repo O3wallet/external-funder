@@ -7,7 +7,7 @@ import spray.json.DefaultJsonProtocol
 
 
 trait FundMsg { def userId: UserId }
-case class Error(code: Int, reason: String, userId: UserId = "noUserId") extends FundMsg
+case class Fail(code: Int, reason: String, userId: UserId = "noUserId") extends FundMsg
 case class Start(userId: UserId, fundingAmount: Satoshi, extra: Option[String] = None) extends FundMsg
 case class FundingTxCreated(start: Start, expiration: Long) extends FundMsg { def userId: UserId = start.userId }
 case class FundingTxAwaits(start: Start, expiration: Long) extends FundMsg { def userId: UserId = start.userId }
@@ -32,8 +32,8 @@ object ImplicitJsonFormats extends DefaultJsonProtocol { me =>
       case unserialiedMessage: FundingTxBroadcasted => unserialiedMessage.toJson
       case unserialiedMessage: FundingTxCreated => unserialiedMessage.toJson
       case unserialiedMessage: FundingTxAwaits => unserialiedMessage.toJson
-      case unserialiedMessage: Error => unserialiedMessage.toJson
       case unserialiedMessage: Start => unserialiedMessage.toJson
+      case unserialiedMessage: Fail => unserialiedMessage.toJson
     }
 
     def read(serialized: JsValue): FundMsg =
@@ -44,8 +44,8 @@ object ImplicitJsonFormats extends DefaultJsonProtocol { me =>
         case JsString("FundingTxBroadcasted") => serialized.convertTo[FundingTxBroadcasted]
         case JsString("FundingTxCreated") => serialized.convertTo[FundingTxCreated]
         case JsString("FundingTxAwaits") => serialized.convertTo[FundingTxAwaits]
-        case JsString("Error") => serialized.convertTo[Error]
         case JsString("Start") => serialized.convertTo[Start]
+        case JsString("Fail") => serialized.convertTo[Fail]
         case _ => throw new RuntimeException
       }
   }
@@ -64,9 +64,9 @@ object ImplicitJsonFormats extends DefaultJsonProtocol { me =>
   implicit val satoshiFmt: RootJsonFormat[Satoshi] =
     jsonFormat[Long, Satoshi](Satoshi.apply, "amount")
 
-  implicit val errorFmt: JsonFormat[Error] =
+  implicit val failFmt: JsonFormat[Fail] =
     taggedJsonFmt(jsonFormat[Int, String, String,
-      Error](Error.apply, "userId", "code", "reason"), tag = "Error")
+      Fail](Fail.apply, "userId", "code", "reason"), tag = "Fail")
 
   implicit val startFmt: JsonFormat[Start] =
     taggedJsonFmt(jsonFormat[UserId, Satoshi, Option[String],

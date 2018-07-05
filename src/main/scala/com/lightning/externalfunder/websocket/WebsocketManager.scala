@@ -23,7 +23,7 @@ import org.java_websocket.WebSocket
 
 class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Actor { me =>
   private var conns = Map.empty[UserId, WebSocketConnSet] withDefaultValue Set.empty[WebSocket]
-  override def preStart: Unit = context.system.eventStream.subscribe(channel = classOf[Error], subscriber = self)
+  override def preStart: Unit = context.system.eventStream.subscribe(channel = classOf[Fail], subscriber = self)
   implicit def conn2UserId(webSocketConnection: WebSocket): UserId = webSocketConnection.getAttachment[UserId]
   context.system.scheduler.schedule(10.minutes, 10.minutes)(self ! 'cleanup)
 
@@ -43,7 +43,7 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
         case Failure(verificationError) =>
           // Could not start an internal verification
           // fail connection right away and let user know
-          val err = Error(101, verificationError.getMessage)
+          val err = Fail(101, verificationError.getMessage)
           conn send err.toJson.toString
           conn.close
 
@@ -56,7 +56,7 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
 
     def onMessage(conn: WebSocket, incomingUserMessage: String): Unit = try {
       // Socket is always considered verified if it has an attached userId information
-      if (conn2UserId(conn) == null) conn send Error(102, "Not verified").toJson.toString
+      if (conn2UserId(conn) == null) conn send Fail(102, "Not verified").toJson.toString
       else wallet ! incomingUserMessage.parseJson.convertTo[FundMsg]
     } catch errlog
 
