@@ -5,7 +5,8 @@ import octopus.dsl._
 import net.ceedubs.ficus.Ficus._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import com.lightning.externalfunder.wire.ImplicitJsonFormats._
-import com.lightning.externalfunder.wire.{FundingTxCreated, Start}
+
+import com.lightning.externalfunder.wire.{Start, Started}
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.lightning.externalfunder.EmailVerifierConfig
 import com.lightning.externalfunder.Utils.hex2String
@@ -17,17 +18,16 @@ import scala.concurrent.Future
 
 trait WebsocketVerifier {
   def verify(ch: ClientHandshake): Future[Start]
-  def notifyOnReady(ftc: FundingTxCreated): Future[Unit]
+  def notifyOnReady(started: Started): Future[Unit]
   def notifyOnFailed(start: Start): Future[Unit]
 }
 
 class EmailVerifier extends WebsocketVerifier {
-  val EmailVerifierConfig(host, port, subject, from, password, minAmountSat, okTemplate, failTemplate) =
+  val EmailVerifierConfig(host, port, subject, from, password, okTemplate, failTemplate) =
     ConfigFactory.parseResources("emailVerifier.conf") as[EmailVerifierConfig] "config"
 
   private val emailValidator = Validator[Start]
-    .rule(_.userId.nonEmpty, "User id can not be an empty string")
-    .rule(_.fundingAmount.amount >= minAmountSat, "Requested funding is too low")
+    .rule(_.userId.nonEmpty, "User ID can not be an empty string")
     .rule(_.extra.forall(_ contains '@'), "Valid email address must contain an @ sign")
     .rule(_.extra.forall(_.split('@').last contains '.'), "Valid email address must contain a dot")
 
@@ -47,14 +47,14 @@ class EmailVerifier extends WebsocketVerifier {
     Mailer(host, port).auth(true).as(from, password).startTtls(true).apply.apply(envelope subject subject)
   }
 
-  def notifyOnReady(ftc: FundingTxCreated): Future[Unit] = ftc.start.extra match {
+  def notifyOnReady(started: Started): Future[Unit] = started.start.extra match {
     // User email is optional so only send out a notification if it was provided
     // extra field can be anything but here we treat is as user email address
 
-    case Some(userProvidedValidEmail) =>
-      val left = new java.util.Date(System.currentTimeMillis - ftc.expiration)
-      val message = okTemplate.format(ftc.start.fundingAmount.amount, ftc.start.userId, left)
-      sendEmail(userProvidedValidEmail, message)
+    case Some(userEmail) =>
+      val left = new java.util.Date(started.expiry)
+      val msg = okTemplate.format(started.start.userId, left)
+      sendEmail(userEmail, msg)
 
     case None =>
       Future.unit
@@ -64,10 +64,10 @@ class EmailVerifier extends WebsocketVerifier {
     // User email is optional so only send out a notification if it was provided
     // extra field can be anything but here we treat is as user email address
 
-    case Some(userProvidedValidEmail) =>
-      // Funding has failed so it's nice to let user know about it
-      val message = failTemplate.format(start.fundingAmount.amount)
-      sendEmail(userProvidedValidEmail, message)
+    case Some(userEmail) =>
+      // Funding has failed so it's nice to let user know
+      val msg = failTemplate.format(start.fundingAmount.amount)
+      sendEmail(userEmail, msg)
 
     case None =>
       Future.unit

@@ -5,6 +5,7 @@ import net.ceedubs.ficus.Ficus._
 import scala.concurrent.duration._
 import com.lightning.walletapp.ln._
 import com.lightning.externalfunder.wire._
+import com.lightning.externalfunder.wire.FundMsg._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import com.lightning.externalfunder.wire.ImplicitJsonFormats._
 import com.lightning.externalfunder.Utils.{UserId, WebSocketConnSet}
@@ -23,7 +24,7 @@ import org.java_websocket.WebSocket
 
 class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Actor { me =>
   private var conns = Map.empty[UserId, WebSocketConnSet] withDefaultValue Set.empty[WebSocket]
-  override def preStart: Unit = context.system.eventStream.subscribe(channel = classOf[Fail], subscriber = self)
+  override def preStart: Unit = context.system.eventStream.subscribe(channel = classOf[FundMsg], subscriber = self)
   implicit def conn2UserId(webSocketConnection: WebSocket): UserId = webSocketConnection.getAttachment[UserId]
   context.system.scheduler.schedule(10.minutes, 10.minutes)(self ! 'cleanup)
 
@@ -40,40 +41,41 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
         // Verification may take quite some time
         // user should always wait until it's done
 
-        case Failure(verificationError) =>
+        case Failure(why) =>
           // Could not start an internal verification
           // fail connection right away and let user know
-          val err = Fail(101, verificationError.getMessage)
+          val err = Fail(FAIL_VERIFY_ERROR, why.getMessage)
           conn send err.toJson.toString
           conn.close
 
-        case Success(initMessage) =>
+        case Success(startMessage) =>
           conns = conns.updated(conn, conns(conn) + conn)
-          conn setAttachment initMessage.userId
-          conn send initMessage.toJson.toString
-          wallet ! initMessage
+          conn setAttachment startMessage.userId
+          wallet ! startMessage
       }
 
     def onMessage(conn: WebSocket, incomingUserMessage: String): Unit = try {
-      // Socket is always considered verified if it has an attached userId information
-      if (conn2UserId(conn) == null) conn send Fail(102, "Not verified").toJson.toString
+      // Socket is only considered verified if conains a userId information, throw an error otherwise
+      if (conn2UserId(conn) == null) conn send Fail(FAIL_NOT_VERIFIED_YET, "Not verified").toJson.toString
       else wallet ! incomingUserMessage.parseJson.convertTo[FundMsg]
     } catch errlog
 
-    def onClose(conn: WebSocket, c: Int, rs: String, rm: Boolean): Unit = cancelSocket(conn)
+    def onClose(conn: WebSocket, c: Int, rs: String, rm: Boolean): Unit = {
+      // Make this socket unverified to ensure it can't be reused and disconnect
+      conns = conns.updated(conn, conns(conn) - conn)
+      conn.setAttachment(null)
+      conn.close
+    }
+
     def onError(conn: WebSocket, exception: Exception): Unit = errlog(exception)
     def onStart: Unit = log("Websocket server has started")
     run
   }
 
   override def receive: Receive = {
-    case fundingTxCreated: FundingTxCreated =>
-      send(fundingTxCreated.userId, fundingTxCreated)
-      verifier.notifyOnReady(fundingTxCreated)
-
-    case fundingBroadcasted: FundingTxBroadcasted =>
-      send(fundingBroadcasted.userId, fundingBroadcasted)
-      conns(fundingBroadcasted.userId) foreach cancelSocket
+    case started @ Started(start, _) =>
+      verifier.notifyOnReady(started)
+      send(start.userId, started)
 
     case fundMessage: FundMsg =>
       // Simply relay regular messages
@@ -83,12 +85,6 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
     case 'cleanup =>
       // Remove empty slots which pile up over time
       conns = conns filter { case _ \ cs => cs.nonEmpty }
-  }
-
-  def cancelSocket(conn: WebSocket): Unit = {
-    conns = conns.updated(conn, conns(conn) - conn)
-    conn.setAttachment(null)
-    conn.close
   }
 
   def send(userId: UserId, message: FundMsg): Unit = for {

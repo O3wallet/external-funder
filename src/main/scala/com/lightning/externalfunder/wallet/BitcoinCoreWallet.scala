@@ -5,6 +5,7 @@ import net.ceedubs.ficus.Ficus._
 import scala.concurrent.duration._
 import com.lightning.walletapp.ln._
 import com.lightning.externalfunder.wire._
+import com.lightning.externalfunder.wire.FundMsg._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import com.lightning.externalfunder.Utils.{UnsignedTxCacheItem, UserId}
 import com.lightning.externalfunder.{BitcoinWalletConfig, CacheItem}
@@ -21,8 +22,8 @@ import akka.actor.Actor
 
 
 class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
-  val BitcoinWalletConfig(rpc, maxFundingSat, deadlineMsec, reserveRetriesDelayMsec, reserveRetriesNum) =
-    ConfigFactory.parseResources("bitcoinCoreWallet.conf") as[BitcoinWalletConfig] "config"
+  val BitcoinWalletConfig(rpc, maxFundingSat, minFundingSat, deadlineMsec, reserveRetriesDelayMsec,
+    reserveRetriesNum) = ConfigFactory.parseResources("bitcoinCoreWallet.conf") as[BitcoinWalletConfig] "config"
 
   case class ReserveOutputs(start: Start, triesDone: Int)
   private var pendingFundingTries = Map.empty[UserId, ReserveOutputs]
@@ -37,7 +38,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
     case currentMillis: Long =>
       // Remove pending funding tries with too many attempts and send an event
       for (userId \ reserveOuts <- pendingFundingTries if reserveOuts.triesDone > reserveRetriesNum) {
-        context.system.eventStream publish Fail(201, s"Failed after $reserveRetriesNum attempts", userId)
+        context.system.eventStream publish Fail(FAIL_FUNDING_ERROR, s"Funding reservation failed", userId)
         pendingFundingTries = pendingFundingTries - userId
         verifier.notifyOnFailed(reserveOuts.start)
       }
@@ -50,20 +51,20 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
         case Success(false) => log(s"Can not rollback $tx")
 
         case Success(true) =>
-          // Only remove a related funding txs if used UTXO indeed was unlocked
-          context.system.eventStream publish Fail(202, "Funding expired", userId)
+          // Only remove a related funding txs if used UTXO indeed was unlocked, otherwise go on
+          context.system.eventStream publish Fail(FAIL_FUNDING_EXPIRED, "Funding expired", userId)
           pendingUnsignedTxs = pendingUnsignedTxs - userId
           pendingSignedTxs = pendingSignedTxs - userId
       }
 
-    case start @ Start(userId, sum, _) =>
-      pendingUnsignedTxs get userId match {
-        case None if sum.amount > maxFundingSat => sender ! Fail(204, "Max funding amount is exceeded", userId)
-        case None if pendingFundingTries contains userId => sender ! Fail(203, "Reservation pending already", userId)
-        case Some(item) if item.data.txOut.head.amount == sum => sender ! FundingTxAwaits(start, item.stamp)
-        case Some(_) => sender ! Fail(204, "Other funding already present", userId)
-        case None => self ! ReserveOutputs(start, triesDone = 0)
-      }
+    case start @ Start(userId, fundingAmount, _, _) => pendingUnsignedTxs get userId match {
+      case None if fundingAmount.amount < minFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_SMALL, "Funding amount is too small", userId)
+      case None if fundingAmount.amount > maxFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_LARGE, "Funding amount exceeded", userId)
+      case None if pendingFundingTries contains userId => sender ! Fail(FAIL_FUNDING_PENDING, "Funding pending already", userId)
+      case Some(item) if item.data.txOut.head.amount == fundingAmount => sender ! Started(start, item.stamp)
+      case Some(_) => sender ! Fail(FAIL_FUNDING_EXISTS, "Other funding already present", userId)
+      case None => self ! ReserveOutputs(start, triesDone = 0)
+    }
 
     case ReserveOutputs(start, n) =>
       // Make a reservation by creating a dummy tx with locked outputs
@@ -74,7 +75,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           val deadline = System.currentTimeMillis + deadlineMsec
           val item = CacheItem(data = Transaction read rawTx, deadline)
           pendingUnsignedTxs = pendingUnsignedTxs.updated(start.userId, item)
-          sender ! FundingTxCreated(start, deadline)
+          context.system.eventStream publish Started(start, deadline)
 
         case Failure(fundingError) =>
           val reserveOuts1 = ReserveOutputs(start, triesDone = n + 1)
@@ -95,18 +96,18 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           sender ! FundingTxSigned(userId, tx.hash, outIndex)
 
         case Failure(_: NoSuchElementException) =>
-          // This funding has probably expired, inform user
-          sender ! Fail(205, "No funding reserved", userId)
+          // This funding has probably expired, inform user about it
+          sender ! Fail(FAIL_FUNDING_NONE, "No funding reserved", userId)
 
         case Failure(signingError) =>
-          // An internal error happened, log to inspect
-          sender ! Fail(206, "Could not sign", userId)
+          // An internal error happened, log to inspect it later
+          sender ! Fail(FAIL_INTERNAL_ERROR, "Could not sign", userId)
           errlog(signingError)
       }
 
     case BroadcastFundingTx(userId, txHash)
       if !pendingSignedTxs.get(userId).exists(_.hash == txHash) =>
-      sender ! Fail(207, "No signed funding tx present", userId)
+      sender ! Fail(FAIL_SIGNED_NONE, "No signed tx present", userId)
 
     case BroadcastFundingTx(userId, _) =>
       val signedTx = pendingSignedTxs(userId)
@@ -120,12 +121,12 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           pendingSignedTxs = pendingSignedTxs - userId
 
         case Success(false) =>
-          // Unable to publish but not an internal error
-          sender ! Fail(208, "Could not publish", userId)
+          // Unable to publish but not an internal error, inform user
+          sender ! Fail(FAIL_INTERNAL_ERROR, "Could not publish", userId)
 
         case Failure(broadcastingError) =>
-          // An internal error happened, log to inspect
-          sender ! Fail(208, "Could not publish", userId)
+          // An internal error happened, inform user, log to inspect
+          sender ! Fail(FAIL_INTERNAL_ERROR, "Could not publish", userId)
           errlog(broadcastingError)
       }
 

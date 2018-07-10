@@ -22,9 +22,8 @@ case class WebsocketManagerConfig(host: String, port: Int) {
   val inetSockAddress = new java.net.InetSocketAddress(host, port)
 }
 
-case class BitcoinWalletConfig(rpc: String, maxFundingSat: Long, deadlineMsec: Int,
-                               reserveRetriesDelayMsec: Int, reserveRetriesNum: Int)
+case class BitcoinWalletConfig(rpc: String, maxFundingSat: Long, minFundingSat: Long,
+                               deadlineMsec: Int, reserveRetriesDelayMsec: Int, reserveRetriesNum: Int)
 
 case class EmailVerifierConfig(host: String, port: Int, subject: String, from: String,
-                               password: String, minAmountSat: Long, okTemplate: String,
-                               failTemplate: String)
+                               password: String, okTemplate: String, failTemplate: String)
