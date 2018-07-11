@@ -38,7 +38,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
     case currentMillis: Long =>
       // Remove pending funding tries with too many attempts and send an event
       for (userId \ reserveOuts <- pendingFundingTries if reserveOuts.triesDone > reserveRetriesNum) {
-        context.system.eventStream publish Fail(FAIL_FUNDING_ERROR, s"Funding reservation failed", userId)
+        context.system.eventStream publish Fail(FAIL_COULD_NOT_RESERVE, s"Funding reservation failed", userId)
         pendingFundingTries = pendingFundingTries - userId
         verifier.notifyOnFailed(reserveOuts.start)
       }
@@ -52,7 +52,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
 
         case Success(true) =>
           // Only remove a related funding txs if used UTXO indeed was unlocked, otherwise go on
-          context.system.eventStream publish Fail(FAIL_FUNDING_EXPIRED, "Funding expired", userId)
+          context.system.eventStream publish Fail(FAIL_RESERVE_EXPIRED, "Funding expired", userId)
           pendingUnsignedTxs = pendingUnsignedTxs - userId
           pendingSignedTxs = pendingSignedTxs - userId
       }
