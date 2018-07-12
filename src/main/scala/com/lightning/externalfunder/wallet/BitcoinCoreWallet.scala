@@ -100,7 +100,6 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
       signTx(userId, pubkeyScript) onComplete {
 
         case Success(two) =>
-          println(two.tx)
           val response = FundingTxSigned(userId, two.tx.hash, two.idx)
           pendingSignedTxs = pendingSignedTxs.updated(userId, two.tx)
           context.system.eventStream publish response
