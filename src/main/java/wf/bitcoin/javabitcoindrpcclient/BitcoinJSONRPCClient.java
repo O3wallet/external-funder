@@ -1101,19 +1101,14 @@ public class BitcoinJSONRPCClient implements BitcoindRpcClient {
 
   public Boolean lockUnspent(RawTransaction rawTx, boolean unlock) {
     List<Map> unspents = new ArrayList<>();
-    int i = 0;
 
     for (RawTransaction.In in : rawTx.vIn()) {
-
-      final int temp = i;
       unspents.add(new LinkedHashMap() {
         {
           put("txid", in.getTransaction().txId());
-          put("vout", temp);
+          put("vout", in.getTransactionOutput().n());
         }
       });
-
-      i++;
     }
 
     return (Boolean) query("lockunspent", unlock, unspents);

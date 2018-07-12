@@ -6,7 +6,7 @@ import org.java_websocket.WebSocket
 
 
 object Utils {
-  type UnsignedTxCacheItem = CacheItem[Transaction]
+  type UnsignedTxCacheItem = CacheItem[TxWithOutIndex]
   type WebSocketConnSet = Set[WebSocket]
   type UserId = String
 
@@ -16,6 +16,7 @@ object Utils {
   def extract[T](src: Map[String, String], fn: String => T, args: String*): Seq[T] = args.map(src andThen fn)
 }
 
+case class TxWithOutIndex(tx: Transaction, idx: Int)
 case class CacheItem[T](data: T, stamp: Long)
 
 case class WebsocketManagerConfig(host: String, port: Int) {

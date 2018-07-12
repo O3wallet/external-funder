@@ -32,7 +32,7 @@ class EmailVerifier extends WebsocketVerifier {
     .rule(_.extra.forall(_.split('@').last contains '.'), "Valid email address must contain a dot")
 
   def verify(ch: ClientHandshake) = Future {
-    val json = hex2String(ch getFieldValue "body")
+    val json = hex2String(ch.getResourceDescriptor drop 1)
     val startMessage = json.parseJson.convertTo[Start]
 
     emailValidator validate startMessage match {

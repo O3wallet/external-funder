@@ -16,10 +16,7 @@ object Tools {
   val random = new RandomGenerator
   def runAnd[T](result: T)(action: Any): T = result
   def log(normalMessage: String): Unit = println("ExternalFunder", normalMessage)
+  def errlog: PartialFunction[Throwable, Unit] = { case err => err.printStackTrace }
   def randomPrivKey = PrivateKey(random getBytes 32, compressed = true)
   def none: PartialFunction[Any, Unit] = { case _ => }
-
-  def errlog: PartialFunction[Throwable, Unit] = {
-    case err => println("ExternalFunder error", err.getMessage)
-  }
 }

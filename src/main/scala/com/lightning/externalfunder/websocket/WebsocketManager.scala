@@ -20,12 +20,13 @@ import org.java_websocket.server.WebSocketServer
 import scala.language.implicitConversions
 import com.typesafe.config.ConfigFactory
 import org.java_websocket.WebSocket
+import scala.concurrent.Future
 
 
 class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Actor { me =>
   private var conns = Map.empty[UserId, WebSocketConnSet] withDefaultValue Set.empty[WebSocket]
-  override def preStart: Unit = context.system.eventStream.subscribe(channel = classOf[FundMsg], subscriber = self)
   implicit def conn2UserId(webSocketConnection: WebSocket): UserId = webSocketConnection.getAttachment[UserId]
+  context.system.eventStream.subscribe(channel = classOf[FundMsg], subscriber = self)
   context.system.scheduler.schedule(10.minutes, 10.minutes)(self ! 'cleanup)
 
   private val inetSockAddress =
@@ -49,8 +50,9 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
           conn.close
 
         case Success(startMessage) =>
-          conns = conns.updated(conn, conns(conn) + conn)
           conn setAttachment startMessage.userId
+          // First set an attachment, then rely on it
+          conns = conns.updated(conn, conns(conn) + conn)
           wallet ! startMessage
       }
 
@@ -67,19 +69,19 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
       conn.close
     }
 
-    def onError(conn: WebSocket, exception: Exception): Unit = errlog(exception)
-    def onStart: Unit = log("Websocket server has started")
-    run
+    def onError(conn: WebSocket, reason: Exception): Unit = errlog(reason)
+    def onStart: Unit = log(s"Websocket server started at $inetSockAddress")
+    Future(run)
   }
 
   override def receive: Receive = {
     case started @ Started(start, _) =>
+      // Notify if user is not online now
       verifier.notifyOnReady(started)
       send(start.userId, started)
 
     case fundMessage: FundMsg =>
       // Simply relay regular messages
-      // this includes subscription errors
       send(fundMessage.userId, fundMessage)
 
     case 'cleanup =>

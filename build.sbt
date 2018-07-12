@@ -13,3 +13,6 @@ libraryDependencies += "com.typesafe.akka" %% "akka-actor" % "2.5.13"
 libraryDependencies += "org.java-websocket" % "Java-WebSocket" % "1.3.8"
 libraryDependencies += "com.github.krzemin" % "octopus-cats_2.12" % "0.3.3"
 libraryDependencies += "ch.lightshed" %% "courier" % "0.1.4"
+
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.5" % "test"
+libraryDependencies += "com.neovisionaries" % "nv-websocket-client" % "2.5"
