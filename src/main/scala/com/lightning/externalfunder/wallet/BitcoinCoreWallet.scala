@@ -4,15 +4,17 @@ import fr.acinq.bitcoin._
 import net.ceedubs.ficus.Ficus._
 import scala.concurrent.duration._
 import com.lightning.walletapp.ln._
+import scala.collection.JavaConverters._
 import com.lightning.externalfunder.wire._
 import com.lightning.externalfunder.wire.FundMsg._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 
-import com.lightning.externalfunder.{BitcoinWalletConfig, CacheItem, TxWithOutIndex}
-import com.lightning.externalfunder.Utils.{TxWithOutIndexCacheItem, UserId}
+import com.lightning.externalfunder.{BitcoinWalletConfig, CacheItem, FundingInfo}
+import com.lightning.externalfunder.Utils.{FundingInfoCacheItem, UserId}
 import com.lightning.walletapp.ln.Tools.{errlog, log}
 import scala.util.{Failure, Success, Try}
 
+import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.RawTransaction
 import com.lightning.externalfunder.websocket.WebsocketVerifier
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.lightning.walletapp.ln.Scripts.multiSig2of2
@@ -28,7 +30,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
 
   case class ReserveOutputs(start: Start, triesDone: Int)
   private var pendingFundingTries = Map.empty[UserId, ReserveOutputs]
-  private var pendingDummyTxs = Map.empty[UserId, TxWithOutIndexCacheItem]
+  private var pendingDummyTxs = Map.empty[UserId, FundingInfoCacheItem]
   private var pendingPreparedTxs = Map.empty[UserId, Transaction]
 
   private val bitcoin = new wf.bitcoin.javabitcoindrpcclient.BitcoinJSONRPCClient(rpc)
@@ -36,6 +38,15 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
   context.system.scheduler.schedule(30.seconds, reserveRetriesDelayMsec.milliseconds)(self ! 'retry)
 
   def receive: Receive = {
+    case start @ Start(userId, funding, _, _, _) => pendingDummyTxs get userId match {
+      case None if funding.amount > maxFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_LARGE, "Funding amount is too high", userId)
+      case None if funding.amount < minFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_SMALL, "Funding amount is too small", userId)
+      case None if pendingFundingTries contains userId => sender ! Fail(FAIL_FUNDING_PENDING, "Funding pending already", userId)
+      case Some(item) if item.data.tx.txOut(item.data.idx).amount == funding => sender ! Started(start, item.stamp, item.data.fee)
+      case Some(_) => sender ! Fail(FAIL_FUNDING_EXISTS, "Other funding already present", userId)
+      case None => self ! ReserveOutputs(start, triesDone = 0)
+    }
+
     case currentMillis: Long =>
       // Remove pending funding tries with too many attempts and send an event
       for (userId \ reserveOuts <- pendingFundingTries if reserveOuts.triesDone > reserveRetriesNum) {
@@ -58,15 +69,6 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
         }
       }
 
-    case start @ Start(userId, funding, _, _, _) => pendingDummyTxs get userId match {
-      case None if funding.amount > maxFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_LARGE, "Funding amount is too high", userId)
-      case None if funding.amount < minFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_SMALL, "Funding amount is too small", userId)
-      case None if pendingFundingTries contains userId => sender ! Fail(FAIL_FUNDING_PENDING, "Funding pending already", userId)
-      case Some(item) if item.data.tx.txOut(item.data.idx).amount == funding => sender ! Started(start, item.stamp)
-      case Some(_) => sender ! Fail(FAIL_FUNDING_EXISTS, "Other funding already present", userId)
-      case None => self ! ReserveOutputs(start, triesDone = 0)
-    }
-
     case ReserveOutputs(start, n) =>
       // Make a reservation by creating a dummy tx with locked outputs
       val dummyMultisigScript = multiSig2of2(randomPrivKey.publicKey, randomPrivKey.publicKey)
@@ -81,11 +83,12 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           val deadline = System.currentTimeMillis + deadlineMsec
           val finder = new PubKeyScriptIndexFinder(Transaction read rawTx)
           val outIndex = finder.findPubKeyScriptIndex(out.publicKeyScript)
-          val item = CacheItem(TxWithOutIndex(finder.tx, outIndex), deadline)
+          val info = FundingInfo(finder.tx, getFee(rawTx), outIndex)
+          val item = CacheItem(info, deadline)
 
           pendingFundingTries = pendingFundingTries - start.userId
           pendingDummyTxs = pendingDummyTxs.updated(start.userId, item)
-          context.system.eventStream publish Started(start, deadline)
+          context.system.eventStream publish Started(start, deadline, info.fee)
 
         case Failure(fundingError) =>
           val reserveOuts1 = ReserveOutputs(start, triesDone = n + 1)
@@ -140,10 +143,18 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
       for (reserveOuts <- pendingFundingTries.values) self ! reserveOuts
   }
 
-  def replacePubKeyScript(userId: UserId, realPubkeyScript: BinaryData): Option[TxWithOutIndex] = for {
-    CacheItem(TxWithOutIndex(Transaction(version, ins, outs, lock), idx), _) <- pendingDummyTxs get userId
+  private def getFee(raw: String) = {
+    val native: RawTransaction = bitcoin decodeRawTransaction raw
+    val outSum = native.vIn.asScala.map(_.getTransactionOutput.value).sum
+    val inSum = native.vOut.asScala.map(_.value).sum
+    val fee = (outSum - inSum) * 100000000L
+    Satoshi(fee.toLong)
+  }
+
+  def replacePubKeyScript(userId: UserId, realPubkeyScript: BinaryData): Option[FundingInfo] = for {
+    CacheItem(FundingInfo(Transaction(v, ins, outs, lock), fee, idx), _) <- pendingDummyTxs get userId
     patchedOuts = outs.patch(idx, outs(idx).copy(publicKeyScript = realPubkeyScript) :: Nil, 1)
-  } yield TxWithOutIndex(Transaction(version, ins, patchedOuts, lock), idx)
+  } yield FundingInfo(Transaction(v, ins, patchedOuts, lock), fee, idx)
 
   def rollback(userId: UserId, tx: Transaction): Future[Boolean] = Future {
     val bitcoinTx = bitcoin decodeRawTransaction Transaction.write(tx).toString

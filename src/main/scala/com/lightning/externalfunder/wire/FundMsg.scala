@@ -23,7 +23,7 @@ object FundMsg {
 // Setup
 trait FundMsg { def userId: UserId }
 case class Fail(code: Int, reason: String, userId: UserId = "noUserId") extends FundMsg
-case class Started(start: Start, expiry: Long) extends FundMsg { def userId: UserId = start.userId }
+case class Started(start: Start, expiry: Long, fee: Satoshi) extends FundMsg { def userId: UserId = start.userId }
 case class Start(userId: UserId, fundingAmount: Satoshi, host: String, port: Int, extra: Option[String] = None) extends FundMsg
 
 // Switching remote peers
@@ -100,6 +100,6 @@ object ImplicitJsonFormats extends DefaultJsonProtocol { me =>
   implicit val fundingTxBroadcastedFmt: JsonFormat[FundingTxBroadcasted] = taggedJsonFmt(jsonFormat[UserId, Transaction,
     FundingTxBroadcasted](FundingTxBroadcasted.apply, "userId", "tx"), tag = "FundingTxBroadcasted")
 
-  implicit val startedFmt: JsonFormat[Started] = taggedJsonFmt(jsonFormat[Start, Long,
-    Started](Started.apply, "start", "expiry"), tag = "Started")
+  implicit val startedFmt: JsonFormat[Started] = taggedJsonFmt(jsonFormat[Start, Long, Satoshi,
+    Started](Started.apply, "start", "expiry", "fee"), tag = "Started")
 }

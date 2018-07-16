@@ -1,12 +1,12 @@
 package com.lightning.externalfunder
 
-import fr.acinq.bitcoin.{BinaryData, Transaction}
+import fr.acinq.bitcoin.{BinaryData, Satoshi, Transaction}
 import scala.language.implicitConversions
 import org.java_websocket.WebSocket
 
 
 object Utils {
-  type TxWithOutIndexCacheItem = CacheItem[TxWithOutIndex]
+  type FundingInfoCacheItem = CacheItem[FundingInfo]
   type WebSocketConnSet = Set[WebSocket]
   type UserId = String
 
@@ -16,15 +16,14 @@ object Utils {
   def extract[T](src: Map[String, String], fn: String => T, args: String*): Seq[T] = args.map(src andThen fn)
 }
 
-case class TxWithOutIndex(tx: Transaction, idx: Int)
 case class CacheItem[T](data: T, stamp: Long)
-
-case class WebsocketManagerConfig(host: String, port: Int) {
-  val inetSockAddress = new java.net.InetSocketAddress(host, port)
-}
-
+case class FundingInfo(tx: Transaction, fee: Satoshi, idx: Int)
 case class BitcoinWalletConfig(rpc: String, maxFundingSat: Long, minFundingSat: Long,
                                deadlineMsec: Int, reserveRetriesDelayMsec: Int, reserveRetriesNum: Int)
 
 case class EmailVerifierConfig(host: String, port: Int, subject: String, from: String,
                                password: String, okTemplate: String, failTemplate: String)
+
+case class WebsocketManagerConfig(host: String, port: Int) {
+  val inetSockAddress = new java.net.InetSocketAddress(host, port)
+}
