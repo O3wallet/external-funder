@@ -9,7 +9,7 @@ import com.lightning.externalfunder.wire.FundMsg._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 
 import com.lightning.externalfunder.{BitcoinWalletConfig, CacheItem, TxWithOutIndex}
-import com.lightning.externalfunder.Utils.{UnsignedTxCacheItem, UserId}
+import com.lightning.externalfunder.Utils.{TxWithOutIndexCacheItem, UserId}
 import com.lightning.walletapp.ln.Tools.{errlog, log}
 import scala.util.{Failure, Success, Try}
 
@@ -28,8 +28,8 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
 
   case class ReserveOutputs(start: Start, triesDone: Int)
   private var pendingFundingTries = Map.empty[UserId, ReserveOutputs]
-  private var pendingUnsignedTxs = Map.empty[UserId, UnsignedTxCacheItem]
-  private var pendingSignedTxs = Map.empty[UserId, Transaction]
+  private var pendingDummyTxs = Map.empty[UserId, TxWithOutIndexCacheItem]
+  private var pendingPreparedTxs = Map.empty[UserId, Transaction]
 
   private val bitcoin = new wf.bitcoin.javabitcoindrpcclient.BitcoinJSONRPCClient(rpc)
   context.system.scheduler.schedule(30.seconds, 30.seconds)(self ! System.currentTimeMillis)
@@ -39,17 +39,17 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
     case currentMillis: Long =>
       // Remove pending funding tries with too many attempts and send an event
       for (userId \ reserveOuts <- pendingFundingTries if reserveOuts.triesDone > reserveRetriesNum) {
-        context.system.eventStream publish Fail(FAIL_COULD_NOT_RESERVE, s"Funding reservation failed", userId)
+        context.system.eventStream publish Fail(FAIL_RESERVE_FAILED, s"Funding reservation failed", userId)
         pendingFundingTries = pendingFundingTries - userId
         verifier.notifyOnFailed(reserveOuts.start)
       }
 
       // Remove unsigned txs which has been pending for too long
-      for (userId \ item <- pendingUnsignedTxs if item.stamp < currentMillis) {
-        // Irregardless of rollback result we remove peding user data and inform them about it
+      for (userId \ item <- pendingDummyTxs if item.stamp < currentMillis) {
+        // Irregardless of rollback result we remove peding user data and inform user about it
         context.system.eventStream publish Fail(FAIL_RESERVE_EXPIRED, "Funding expired", userId)
-        pendingUnsignedTxs = pendingUnsignedTxs - userId
-        pendingSignedTxs = pendingSignedTxs - userId
+        pendingPreparedTxs = pendingPreparedTxs - userId
+        pendingDummyTxs = pendingDummyTxs - userId
 
         rollback(userId, item.data.tx) onComplete {
           case Failure(rollbackError) => errlog(rollbackError)
@@ -58,7 +58,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
         }
       }
 
-    case start @ Start(userId, fundingAmount, _, _) => pendingUnsignedTxs get userId match {
+    case start @ Start(userId, fundingAmount, _, _) => pendingDummyTxs get userId match {
       case None if fundingAmount.amount < minFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_SMALL, "Funding amount is too small", userId)
       case None if fundingAmount.amount > maxFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_LARGE, "Funding amount is too high", userId)
       case None if pendingFundingTries contains userId => sender ! Fail(FAIL_FUNDING_PENDING, "Funding pending already", userId)
@@ -84,7 +84,7 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           val item = CacheItem(TxWithOutIndex(finder.tx, outIndex), deadline)
 
           pendingFundingTries = pendingFundingTries - start.userId
-          pendingUnsignedTxs = pendingUnsignedTxs.updated(start.userId, item)
+          pendingDummyTxs = pendingDummyTxs.updated(start.userId, item)
           context.system.eventStream publish Started(start, deadline)
 
         case Failure(fundingError) =>
@@ -94,54 +94,45 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
           errlog(fundingError)
       }
 
-    case SignFundingTx(userId, pubkeyScript) =>
-      // Attempt to sign a stored dummy funding tx
-      // crucially, we don't broadcast it right away
-      signTx(userId, pubkeyScript) onComplete {
+    case PrepareFundingTx(userId, pubkeyScript) =>
+      // Attempt to update a stored dummy funding tx
+      replacePubKeyScript(userId, pubkeyScript) match {
 
-        case Success(two) =>
-          val response = FundingTxSigned(userId, two.tx.hash, two.idx)
-          pendingSignedTxs = pendingSignedTxs.updated(userId, two.tx)
+        case Some(two1) =>
+          val response = FundingTxReady(userId, two1.tx.hash, two1.idx)
+          pendingPreparedTxs = pendingPreparedTxs.updated(userId, two1.tx)
           context.system.eventStream publish response
 
-        case Failure(_: NoSuchElementException) =>
+        case None =>
           // This funding has probably expired by now, inform user about it
-          val response = Fail(FAIL_FUNDING_NONE, "No funding reserved", userId)
+          val response = Fail(FAIL_RESERVE_EXPIRED, "No funding reserved", userId)
           context.system.eventStream publish response
-
-        case Failure(signingError) =>
-          // An internal error happened, log to inspect it later
-          val response = Fail(FAIL_INTERNAL_ERROR, "Could not sign", userId)
-          context.system.eventStream publish response
-          errlog(signingError)
       }
 
     case BroadcastFundingTx(userId, txHash)
-      if !pendingSignedTxs.get(userId).exists(_.hash == txHash) =>
-      sender ! Fail(FAIL_SIGNED_NONE, "No signed tx present", userId)
+      // Make sure it exists AND also has a correct hash
+      if !pendingPreparedTxs.values.exists(tx => txHash == tx.hash) =>
+      val response = Fail(FAIL_RESERVE_EXPIRED, "No prepared tx present", userId)
+      context.system.eventStream publish response
 
     case BroadcastFundingTx(userId, _) =>
-      val signedTx = pendingSignedTxs(userId)
-      commit(userId, signedTx) onComplete {
+      // Tx is guaranteed to be present here
+      val readyTx = pendingPreparedTxs(userId)
 
-        case Success(true) =>
-          // We are done with this one, free all resources
-          val response = FundingTxBroadcasted(userId, signedTx)
+      commit(userId, readyTx) onComplete {
+        case Success(signedBroadcastedTx) =>
+          // We are done here, free all the resources
+          val ok = FundingTxBroadcasted(userId, signedBroadcastedTx)
           pendingFundingTries = pendingFundingTries - userId
-          pendingUnsignedTxs = pendingUnsignedTxs - userId
-          pendingSignedTxs = pendingSignedTxs - userId
-          context.system.eventStream publish response
+          pendingPreparedTxs = pendingPreparedTxs - userId
+          pendingDummyTxs = pendingDummyTxs - userId
+          context.system.eventStream publish ok
 
-        case Success(false) =>
-          // Unable to publish but not an internal error, inform user about it
-          val response = Fail(FAIL_INTERNAL_ERROR, "Could not publish", userId)
-          context.system.eventStream publish response
-
-        case Failure(broadcastingError) =>
+        case Failure(broadcastError) =>
           // An internal error happened, inform user, log to inspect it later
-          val response = Fail(FAIL_INTERNAL_ERROR, "Could not publish", userId)
+          val response = Fail(FAIL_PUBLISH_ERROR, "Could not broadcast", userId)
           context.system.eventStream publish response
-          errlog(broadcastingError)
+          errlog(broadcastError)
       }
 
     case 'retry =>
@@ -149,24 +140,19 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
       for (reserveOuts <- pendingFundingTries.values) self ! reserveOuts
   }
 
-  def replacePubKeyScript(userId: UserId, pubkeyScript: BinaryData): Option[TxWithOutIndex] = for {
-    CacheItem(TxWithOutIndex(Transaction(v, ins, outs, lock), idx), _) <- pendingUnsignedTxs get userId
-    patchedOuts = outs.patch(idx, outs(idx).copy(publicKeyScript = pubkeyScript) :: Nil, 1)
-  } yield TxWithOutIndex(Transaction(v, ins, patchedOuts, lock), idx)
-
-  def signTx(userId: UserId, realFundingPubKeyScript: BinaryData) = Future {
-    replacePubKeyScript(userId, pubkeyScript = realFundingPubKeyScript) match {
-      case Some(two) => TxWithOutIndex(Transaction read bitcoin.signRawTransaction(Transaction.write(two.tx).toString), two.idx)
-      case None => throw new NoSuchElementException("Requested dummy transaction has not been found in pendingUnsignedTxs")
-    }
-  }
+  def replacePubKeyScript(userId: UserId, realPubkeyScript: BinaryData): Option[TxWithOutIndex] = for {
+    CacheItem(TxWithOutIndex(Transaction(version, ins, outs, lock), idx), _) <- pendingDummyTxs get userId
+    patchedOuts = outs.patch(idx, outs(idx).copy(publicKeyScript = realPubkeyScript) :: Nil, 1)
+  } yield TxWithOutIndex(Transaction(version, ins, patchedOuts, lock), idx)
 
   def rollback(userId: UserId, tx: Transaction): Future[Boolean] = Future {
-    val bitcoinTx = bitcoin.decodeRawTransaction(Transaction.write(tx).toString)
+    val bitcoinTx = bitcoin decodeRawTransaction Transaction.write(tx).toString
     bitcoin.lockUnspent(bitcoinTx, true)
   }
 
-  def commit(userId: UserId, tx: Transaction): Future[Boolean] = Future {
-    bitcoin.sendRawTransaction(Transaction.write(tx).toString).nonEmpty
+  def commit(userId: UserId, tx: Transaction): Future[Transaction] = Future {
+    val signedRawTx = bitcoin signRawTransaction Transaction.write(tx).toString
+    val isPublished = bitcoin.sendRawTransaction(signedRawTx) == tx.txid.toString
+    if (isPublished) tx else throw new Exception("Could not broadcast")
   }
 }

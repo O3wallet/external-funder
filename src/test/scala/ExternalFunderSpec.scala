@@ -38,14 +38,14 @@ class ExternalFunderSpec extends FunSuite {
 
             val dummyMultisigScript = multiSig2of2(randomPrivKey.publicKey, randomPrivKey.publicKey)
             val publicKeyScript = Script.write(Script pay2wsh dummyMultisigScript)
-            val sign = SignFundingTx(userId, publicKeyScript)
+            val sign = PrepareFundingTx(userId, publicKeyScript)
             ws.sendText(sign.toJson.toString)
 
-          case signed: FundingTxSigned =>
-            println(s"GOT A SIGNED MESSAGE: $signed")
+          case ready: FundingTxReady =>
+            println(s"GOT A READY MESSAGE: $ready")
             Thread.sleep(2000L)
 
-            val broadcast = BroadcastFundingTx(userId, signed.txHash)
+            val broadcast = BroadcastFundingTx(userId, ready.txHash)
             ws.sendText(broadcast.toJson.toString)
 
           case other =>

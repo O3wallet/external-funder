@@ -6,7 +6,7 @@ import org.java_websocket.WebSocket
 
 
 object Utils {
-  type UnsignedTxCacheItem = CacheItem[TxWithOutIndex]
+  type TxWithOutIndexCacheItem = CacheItem[TxWithOutIndex]
   type WebSocketConnSet = Set[WebSocket]
   type UserId = String
 
