@@ -58,11 +58,11 @@ class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
         }
       }
 
-    case start @ Start(userId, fundingAmount, _, _) => pendingDummyTxs get userId match {
-      case None if fundingAmount.amount < minFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_SMALL, "Funding amount is too small", userId)
-      case None if fundingAmount.amount > maxFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_LARGE, "Funding amount is too high", userId)
+    case start @ Start(userId, funding, _, _, _) => pendingDummyTxs get userId match {
+      case None if funding.amount > maxFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_LARGE, "Funding amount is too high", userId)
+      case None if funding.amount < minFundingSat => sender ! Fail(FAIL_AMOUNT_TOO_SMALL, "Funding amount is too small", userId)
       case None if pendingFundingTries contains userId => sender ! Fail(FAIL_FUNDING_PENDING, "Funding pending already", userId)
-      case Some(item) if item.data.tx.txOut(item.data.idx).amount == fundingAmount => sender ! Started(start, item.stamp)
+      case Some(item) if item.data.tx.txOut(item.data.idx).amount == funding => sender ! Started(start, item.stamp)
       case Some(_) => sender ! Fail(FAIL_FUNDING_EXISTS, "Other funding already present", userId)
       case None => self ! ReserveOutputs(start, triesDone = 0)
     }

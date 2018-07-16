@@ -23,8 +23,8 @@ object FundMsg {
 // Setup
 trait FundMsg { def userId: UserId }
 case class Fail(code: Int, reason: String, userId: UserId = "noUserId") extends FundMsg
-case class Start(userId: UserId, fundingAmount: Satoshi, url: String, extra: Option[String] = None) extends FundMsg
 case class Started(start: Start, expiry: Long) extends FundMsg { def userId: UserId = start.userId }
+case class Start(userId: UserId, fundingAmount: Satoshi, host: String, port: Int, extra: Option[String] = None) extends FundMsg
 
 // Switching remote peers
 case class PrepareFundingTx(userId: UserId, pubkeyScript: BinaryData) extends FundMsg
@@ -85,8 +85,8 @@ object ImplicitJsonFormats extends DefaultJsonProtocol { me =>
       Fail](Fail.apply, "userId", "code", "reason"), tag = "Fail")
 
   implicit val startFmt: JsonFormat[Start] =
-    taggedJsonFmt(jsonFormat[UserId, Satoshi, String, Option[String],
-      Start](Start.apply, "userId", "fundingAmount", "url", "extra"), tag = "Start")
+    taggedJsonFmt(jsonFormat[UserId, Satoshi, String, Int, Option[String],
+      Start](Start.apply, "userId", "fundingAmount", "host", "port", "extra"), tag = "Start")
 
   implicit val prepareFundingTxFmt: JsonFormat[PrepareFundingTx] = taggedJsonFmt(jsonFormat[UserId, BinaryData,
     PrepareFundingTx](PrepareFundingTx.apply, "userId", "pubkeyScript"), tag = "PrepareFundingTx")

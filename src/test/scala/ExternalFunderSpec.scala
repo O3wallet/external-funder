@@ -20,10 +20,10 @@ class ExternalFunderSpec extends FunSuite {
 
   test("ExternalFunderSpec") {
     val userId = "user-1"
-    val start = Start(userId, Satoshi(100000L), "ws://127.0.0.1:9001", Some("anton.kumaigorodskiy@outlook.com"))
-    val started = Started(start, System.currentTimeMillis + 300000)
+    val start = Start(userId, Satoshi(100000L), "127.0.0.1", 9001, Some("anton.kumaigorodskiy@outlook.com"))
 
-    val url = start.url + "/" + BinaryData(start.toJson.toString getBytes "UTF-8").toString
+    val point = start.host + ":" + start.port
+    val url = "ws://" + point + "/" + BinaryData(start.toJson.toString getBytes "UTF-8").toString
     val ws: WebSocket = (new WebSocketFactory).createSocket(url, 7500)
 
     ws addListener new WebSocketAdapter {
