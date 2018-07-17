@@ -6,14 +6,12 @@ import org.java_websocket.WebSocket
 
 
 object Utils {
-  type FundingInfoCacheItem = CacheItem[FundingInfo]
-  type WebSocketConnSet = Set[WebSocket]
   type UserId = String
+  type WebSocketConnSet = Set[WebSocket]
+  type FundingInfoCacheItem = CacheItem[FundingInfo]
 
-  val hex2String: String => String = hex => new String(BinaryData(hex), "UTF-8")
-  implicit def arg2Apply[T](argument: T): ArgumentRunner[T] = new ArgumentRunner(argument)
-  class ArgumentRunner[T](wrap: T) { def >>[V](fs: (T => V)*): Seq[V] = for (fun <- fs) yield fun apply wrap }
-  def extract[T](src: Map[String, String], fn: String => T, args: String*): Seq[T] = args.map(src andThen fn)
+  val hex2String: String => String = hex =>
+    new String(BinaryData(hex).toArray, "UTF-8")
 }
 
 case class CacheItem[T](data: T, stamp: Long)
