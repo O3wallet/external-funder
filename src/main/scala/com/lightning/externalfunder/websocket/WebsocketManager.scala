@@ -2,18 +2,16 @@ package com.lightning.externalfunder.websocket
 
 import spray.json._
 import net.ceedubs.ficus.Ficus._
-import scala.concurrent.duration._
-import com.lightning.walletapp.ln._
 import com.lightning.externalfunder.wire._
 import com.lightning.externalfunder.wire.FundMsg._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import com.lightning.externalfunder.wire.ImplicitJsonFormats._
 import com.lightning.externalfunder.Utils.{UserId, WebSocketConnSet}
+import com.lightning.externalfunder.{Utils, WebsocketManagerConfig}
 import com.lightning.walletapp.ln.Tools.{errlog, log}
 import scala.util.{Failure, Success}
 import akka.actor.{Actor, ActorRef}
 
-import com.lightning.externalfunder.WebsocketManagerConfig
 import scala.concurrent.ExecutionContext.Implicits.global
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
@@ -21,17 +19,19 @@ import scala.language.implicitConversions
 import com.typesafe.config.ConfigFactory
 import org.java_websocket.WebSocket
 import scala.concurrent.Future
+import java.io.File
 
 
 class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Actor { me =>
   private var conns = Map.empty[UserId, WebSocketConnSet] withDefaultValue Set.empty[WebSocket]
   implicit def conn2UserId(webSocketConnection: WebSocket): UserId = webSocketConnection.getAttachment[UserId]
   context.system.eventStream.subscribe(channel = classOf[FundMsg], subscriber = self)
-  context.system.scheduler.schedule(10.minutes, 10.minutes)(self ! 'cleanup)
 
-  private val inetSockAddress =
-    ConfigFactory.parseResources("websocketManager.conf")
-      .as[WebsocketManagerConfig]("config").inetSockAddress
+  private val inetSockAddress = {
+    val config = ConfigFactory parseFile new File(Utils.datadir, "websocketManager.conf")
+    val WebsocketManagerConfig(host, port) = config.as[WebsocketManagerConfig]("config")
+    new java.net.InetSocketAddress(host, port)
+  }
 
   val server = new WebSocketServer(inetSockAddress) {
     def onOpen(conn: WebSocket, handshake: ClientHandshake): Unit =
@@ -64,6 +64,7 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
 
     def onClose(conn: WebSocket, c: Int, rs: String, rm: Boolean): Unit = {
       // Make this socket unverified to ensure it can't be reused and disconnect
+      // also remove it from connection pool for a given user id
       conns = conns.updated(conn, conns(conn) - conn)
       conn.setAttachment(null)
       conn.close
@@ -75,18 +76,14 @@ class WebsocketManager(verifier: WebsocketVerifier, wallet: ActorRef) extends Ac
   }
 
   override def receive: Receive = {
-    case started @ Started(start, _) =>
+    case startedResponse: Started =>
       // Notify if user is not online now
-      verifier.notifyOnReady(started)
-      send(start.userId, started)
+      verifier.notifyOnReady(startedResponse)
+      send(startedResponse.userId, startedResponse)
 
     case fundMessage: FundMsg =>
       // Simply relay regular messages
       send(fundMessage.userId, fundMessage)
-
-    case 'cleanup =>
-      // Remove empty slots which pile up over time
-      conns = conns filter { case _ \ cs => cs.nonEmpty }
   }
 
   def send(userId: UserId, message: FundMsg): Unit = for {

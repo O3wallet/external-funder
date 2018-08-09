@@ -4,16 +4,15 @@ import fr.acinq.bitcoin._
 import net.ceedubs.ficus.Ficus._
 import scala.concurrent.duration._
 import com.lightning.walletapp.ln._
+import com.lightning.externalfunder._
 import scala.collection.JavaConverters._
 import com.lightning.externalfunder.wire._
 import com.lightning.externalfunder.wire.FundMsg._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 
-import com.lightning.externalfunder.{BitcoinWalletConfig, CacheItem, FundingInfo}
-import com.lightning.externalfunder.Utils.{FundingInfoCacheItem, UserId}
-import com.lightning.walletapp.ln.Tools.{errlog, log}
 import scala.util.{Failure, Success, Try}
-
+import com.lightning.walletapp.ln.Tools.{errlog, log}
+import com.lightning.externalfunder.Utils.{FundingInfoCacheItem, UserId}
 import wf.bitcoin.javabitcoindrpcclient.BitcoindRpcClient.RawTransaction
 import com.lightning.externalfunder.websocket.WebsocketVerifier
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -22,11 +21,12 @@ import com.lightning.walletapp.ln.Tools.randomPrivKey
 import com.typesafe.config.ConfigFactory
 import scala.concurrent.Future
 import akka.actor.Actor
+import java.io.File
 
 
 class BitcoinCoreWallet(verifier: WebsocketVerifier) extends Actor with Wallet {
-  val BitcoinWalletConfig(rpc, maxFundingSat, minFundingSat, deadlineMsec, reserveRetriesDelayMsec,
-    reserveRetriesNum) = ConfigFactory.parseResources("bitcoinCoreWallet.conf") as[BitcoinWalletConfig] "config"
+  val BitcoinWalletConfig(rpc, maxFundingSat, minFundingSat, deadlineMsec, reserveRetriesDelayMsec, reserveRetriesNum) =
+    ConfigFactory parseFile new File(Utils.datadir, "bitcoinCoreWallet.conf") as[BitcoinWalletConfig] "config"
 
   case class ReserveOutputs(start: Start, triesDone: Int)
   private var pendingFundingTries = Map.empty[UserId, ReserveOutputs]

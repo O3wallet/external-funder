@@ -16,3 +16,13 @@ libraryDependencies += "ch.lightshed" %% "courier" % "0.1.4"
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.5" % "test"
 libraryDependencies += "com.neovisionaries" % "nv-websocket-client" % "2.5"
+
+val workaround = {
+  sys.props += "packaging.type" -> "jar"
+  ()
+}
+
+mergeStrategy in assembly := {
+  case n if n.startsWith("META-INF") => MergeStrategy.discard
+  case _ => MergeStrategy.first
+}
