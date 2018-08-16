@@ -30,7 +30,7 @@ Here's how it looks from Exchange's point of view:
 
 ---
 
-Software which does an Alice <-> Exchange communication part: https://github.com/btcontract/external-funder, it's supposed to run on an exchange server and is designed to be extensible for a specific needs an exchange has. User authentication, outputs selection, throttling strategies etc. are supposed to be executed internally by an exchange which external-funder getting notified about results and relaying them to a user using a standard protocol.
+Software which does an Alice <-> Exchange communication part: https://github.com/btcontract/external-funder, it's supposed to run on an exchange server and is designed to be extensible for a specific needs an exchange has. User authentication, outputs selection, throttling strategies etc. are supposed to be executed internally by an exchange with external-funder getting notified about results and relaying them to a user using a standard protocol.
 
 --- 
 
