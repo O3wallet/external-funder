@@ -2,7 +2,7 @@
 
 Core issue: opening a lightning channel requires an on-chain transaction, hence a channel funder needs to have enough BTC available in a local wallet. This may not always be the case, especially when an app is installed for the first time. 
 
-In such degenerate cases users will have to send a first transaction from outside (another wallet, exchange) into their local wallet first, and then a second transaction from a local wallet to a channel. An intermediary outside -> wallet transaction is totally useless here, it consumes additional time and user effort, creates an unwanted blockchain load and doubles an on-chain fees a funder has to pay.
+In such degenerate cases users will have to send a first transaction from outside (another wallet, exchange) into their local wallet, and then a second transaction from a local wallet to a channel. An intermediary outside -> wallet transaction is totally useless here, it consumes additional time and user effort, creates an unwanted blockchain load and doubles an on-chain fees a funder has to pay.
 
 ---
 
