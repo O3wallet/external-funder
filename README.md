@@ -23,7 +23,7 @@ Here's how it looks from Exchange's point of view:
 
 3. In a middle of Alice <-> Bob negotiation, Alice device sends a message to Exchange which says "please use my reserved outputs to create a transaction which spends my funds to this pubkeyScript, BUT do not publish a transaction yet, just give me a txid and a funding output index"
 	- This step may be repeated multiple times as Alice potentially negotiates with multiple Bobs because the first one is unresponsive/inconsistent/whatever
-	- Important note: all the outputs in this transaction should be segwit so the resulting txid can not be malleated, Exchange should support segwit for on-chain deposits so it later has segwit outputs to select from.
+	- Important note: all the inputs in this transaction should be segwit so the resulting txid can not be malleated, Exchange should support segwit for on-chain deposits so it later has segwit outputs to select from.
 
 4. Once Alice <-> Bob negotiation is complete, Alice sends a message to Exchange which says "OK, please now publish my reserved transaction with such txid"
 	- This is it for an Exchange, it's job is done here.
