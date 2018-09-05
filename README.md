@@ -6,31 +6,31 @@ In such degenerate cases users will have to send a first transaction from outsid
 
 ---
 
-Solution: payment channel on a user's device can be funded from a remote exchange using a single on-chain transaction. Exchange may do this by utilizing user's trading balance but also by providing something like fiat -> channel service (if you plan to ever touch fiat). Exchange may earn on this by additionally charging user with some extra fee for this type of withdrawal. Other than this, exchange may benefit from hype and attract new users by providing this service.
+Solution: payment channel on a user's device can be funded from a remote service using a single on-chain transaction. A service may do this by utilizing user's trading balance but also by providing something like fiat -> channel transactions. A service may earn on this by additionally charging user with some extra fee for this type of withdrawal.
 
 ---
 
-Complexities: channel funding protocol is interactive, meaning an automatic negotiation has to happen between Alice the funder and Bob the remote fundee LN node before Alice publishes a funding transaction. This in turn means a communication between Alice and Exchange has to be happening in parallel.
+Complexities: channel funding protocol is interactive, meaning an automatic negotiation has to happen between Alice the funder and Bob the remote fundee before Alice publishes a funding transaction. This in turn means that a communication between Alice and Service has to be happening in parallel.
 
-Here's how it looks from Exchange's point of view:
+Here's how it looks from Service's point of view:
 
-1. Alice the trader orders a funding amount using her trading balance.
-	- At this point Exchange has to allocate an unspent output for a future transaction and reserve it for Alice.
-	- Once done, Exchange has to notify Alice about funding availability, this may not happen immediately as Exchange may need some time (perhaps hours) to find fitting unspent outputs.
-	- Alice's reservation should have an expiration in case if she never proceeds after ordering a funding, probably some throttling mechanism should also be in place for users who order reservations repeatedly and do not proceed with them (thankfully this is easy to do on a centralized exchange with user accounts).
+1. Alice orders a funding amount using her funds currently stored at a Service.
+	- At this point Service has to allocate an unspent output for a future transaction and reserve it for Alice.
+	- Once done, Service has to notify Alice about funding availability, this may not happen immediately as Service may need some time (perhaps hours) to find some fitting unspent outputs.
+	- Alice's reservation should have an expiration in case if she never proceeds after ordering a funding, probably some throttling mechanism should also be in place for users who order reservations repeatedly and do not proceed with them.
 
-2. Once notified, Alice logs in to an Exchange site, and uses her phone to scan a special QR which contains all the required info to authenticate Alice.
+2. Once notified, Alice logs in to a Service site, and uses her phone to scan a special QR which contains all the required info to authenticate Alice.
 
-3. In a middle of Alice <-> Bob negotiation, Alice device sends a message to Exchange which says "please use my reserved outputs to create a transaction which spends my funds to this pubkeyScript, BUT do not publish a transaction yet, just give me a txid and a funding output index"
-	- This step may be repeated multiple times as Alice potentially negotiates with multiple Bobs because the first one is unresponsive/inconsistent/whatever
-	- Important note: all the inputs in this transaction should be segwit so the resulting txid can not be malleated, Exchange should support segwit for on-chain deposits so it later has segwit outputs to select from.
+3. In a middle of Alice <-> Bob negotiation, Alice device sends a message to Service which says "please use my reserved outputs to create a transaction which spends my funds to this pubkeyScript, BUT do not publish a transaction yet, just give me a txid and a funding output index"
+	- This step may be repeated multiple times as Alice potentially negotiates with multiple Bobs because the first one is unresponsive/inconsistent/whatever.
+	- Important note: all the inputs in this transaction should be segwit so the resulting txid can not be malleated, a Service should support segwit for on-chain deposits so it later has segwit outputs to select from.
 
-4. Once Alice <-> Bob negotiation is complete, Alice sends a message to Exchange which says "OK, please now publish my reserved transaction with such txid"
-	- This is it for an Exchange, it's job is done here.
+4. Once Alice <-> Bob negotiation is complete, Alice sends a message to Service which says "OK, please now publish my reserved transaction with such txid"
+	- This is it for a Service, it's job is done here.
 
 ---
 
-Software which does an Alice <-> Exchange communication part: https://github.com/btcontract/external-funder, it's supposed to run on an exchange server and is designed to be extensible for a specific needs an exchange has. User authentication, outputs selection, throttling strategies etc. are supposed to be executed internally by an exchange with external-funder getting notified about results and relaying them to a user using a standard protocol.
+Software which does an Alice <-> Service communication part is supposed to run on a Service's server and is designed to be extensible for possible specific needs. User authentication, outputs selection, throttling strategies etc. are supposed to be executed internally by a Service with external-funder getting notified about results and relaying them to a user using a standard protocol.
 
 --- 
 
