@@ -9,7 +9,7 @@ object Utils {
   type UserId = String
   type WebSocketConnSet = Set[WebSocket]
   type FundingInfoCacheItem = CacheItem[FundingInfo]
-  val datadir: String = System.getProperty("datadir", System.getProperty("user.home") + "/.ef")
+  val datadir: String = System.getProperty("ef.datadir", System.getProperty("user.home") + "/.ef")
   val string2Hex: String => String = string => BinaryData(string getBytes "UTF-8").toString
   val hex2String: String => String = hex => new String(BinaryData(hex).toArray, "UTF-8")
 }
