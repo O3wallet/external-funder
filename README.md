@@ -36,6 +36,6 @@ Software which does an Alice <-> Service communication part is supposed to run o
 
 Working demo:
 
-1. Install a Bitcoin Lightning Wallet TESTNET: https://play.google.com/store/apps/details?id=com.lightning.wallet&hl=en
+1. Install a Bitcoin Lightning Wallet TESTNET APK: https://github.com/btcontract/lnwallet/blob/testnet/app/app-release.apk
 
 2. Go to http://funder.lightning-wallet.com/funder/ and order a 1.000.000 SAT amount, then scan a QR using wallet and get a local channel funded from a Bitcoin Core instance located at lightning-wallet.com
